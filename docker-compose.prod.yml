@@ -78,7 +78,7 @@ services:
       - fafi_network_prod
 
   minio:
-    image: minio/minio
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     container_name: fafi_minio_prod
     restart: unless-stopped
     ports:
