@@ -14,6 +14,9 @@ RUN apk add --no-cache git
 WORKDIR /src
 # GITHUB_TOKEN is passed as a BuildKit secret (not an ARG) so it never persists
 # in the image's layer history or build cache.
+# The tokenized clone URL is written to .git/config, so .git is removed in this same
+# RUN (only the commit id is kept in REVISION): the token must not reach the final
+# image nor this builder layer.
 RUN --mount=type=secret,id=github_token \
     if [ -z "$GIT_REPO_URL" ]; then \
     echo "ERROR: GIT_REPO_URL is empty. Run compose with --env-file .env.prod." >&2; \
@@ -25,8 +28,10 @@ RUN --mount=type=secret,id=github_token \
     else \
     REPO_URL=$GIT_REPO_URL; \
     fi; \
-    GIT_TERMINAL_PROMPT=0 git clone -b $GIT_BRANCH $REPO_URL fafi_project; \
-    test -f fafi_project/manage.py && test -f fafi_project/requirements.txt
+    GIT_TERMINAL_PROMPT=0 git clone --depth 1 -b $GIT_BRANCH $REPO_URL fafi_project; \
+    test -f fafi_project/manage.py && test -f fafi_project/requirements.txt; \
+    git -C fafi_project rev-parse HEAD > fafi_project/REVISION; \
+    rm -rf fafi_project/.git
 
 # ------------- PROD ENVIRONMENT -------------
 FROM python:3.12-alpine AS prod
