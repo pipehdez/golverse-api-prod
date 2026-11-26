@@ -3,14 +3,19 @@
 #
 # Code AND dependencies both come from the same clone of the FAFI-api repo
 # (GIT_REPO_URL/GIT_BRANCH), so requirements.txt never has to be copied into this
-# repo by hand. Build with the project env file so those values reach the build:
-#   docker compose --env-file .env.prod -f docker-compose.prod.yml build
+# repo by hand. Deploy with scripts/deploy.sh: it resolves the commit to build
+# (GIT_REVISION), builds, restarts and checks every container runs that commit.
 
 # Builder stage: clones the FAFI-api repo (requires Git)
 FROM python:3.12-alpine AS builder-repo
 ARG GIT_REPO_URL
 ARG GIT_BRANCH=main
 RUN apk add --no-cache git
+# Exact FAFI-api commit this build must contain (scripts/deploy.sh resolves it from
+# GIT_BRANCH). It is part of the clone step's cache key: an unchanged commit reuses the
+# cached clone, a new one re-clones. Without it, Docker silently reused a stale clone
+# whenever this Dockerfile didn't change, deploying old code.
+ARG GIT_REVISION
 WORKDIR /src
 # GITHUB_TOKEN is passed as a BuildKit secret (not an ARG) so it never persists
 # in the image's layer history or build cache.
@@ -22,6 +27,10 @@ RUN --mount=type=secret,id=github_token \
     echo "ERROR: GIT_REPO_URL is empty. Run compose with --env-file .env.prod." >&2; \
     exit 1; \
     fi; \
+    if [ -z "$GIT_REVISION" ]; then \
+    echo "ERROR: GIT_REVISION is empty. Deploy with scripts/deploy.sh (it pins the commit)." >&2; \
+    exit 1; \
+    fi; \
     TOKEN=$(cat /run/secrets/github_token 2>/dev/null || true); \
     if [ -n "$TOKEN" ]; then \
     REPO_URL=$(echo $GIT_REPO_URL | sed "s#https://#https://${TOKEN}:x-oauth-basic@#"); \
@@ -30,7 +39,12 @@ RUN --mount=type=secret,id=github_token \
     fi; \
     GIT_TERMINAL_PROMPT=0 git clone --depth 1 -b $GIT_BRANCH $REPO_URL fafi_project; \
     test -f fafi_project/manage.py && test -f fafi_project/requirements.txt; \
-    git -C fafi_project rev-parse HEAD > fafi_project/REVISION; \
+    CLONED=$(git -C fafi_project rev-parse HEAD); \
+    if [ "$CLONED" != "$GIT_REVISION" ]; then \
+    echo "ERROR: $GIT_BRANCH is at $CLONED, expected $GIT_REVISION (branch moved during deploy?). Re-run scripts/deploy.sh." >&2; \
+    exit 1; \
+    fi; \
+    echo "$CLONED" > fafi_project/REVISION; \
     rm -rf fafi_project/.git
 
 # ------------- PROD ENVIRONMENT -------------
